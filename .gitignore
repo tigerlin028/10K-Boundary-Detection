@@ -1,0 +1,17 @@
+# Ignore caches, temp data, and output
+__pycache__/
+*.pyc
+*.log
+*.tmp
+*.DS_Store
+
+# Ignore SEC data output folders
+header_predictions/
+parsed_lines/
+sec-edgar-filings/
+section_boundaries/
+section_filled/
+
+# Ignore virtual environments
+venv/
+.env/

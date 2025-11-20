@@ -1,0 +1,6 @@
+tqdm
+beautifulsoup4
+lxml
+requests
+pandas
+sec-edgar-downloader
