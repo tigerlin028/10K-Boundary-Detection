@@ -1,5 +1,6 @@
 import os
 import json
+import re
 from tqdm import tqdm
 
 HEADER_DIR = "/Users/linxiaotian/Desktop/WRDS/10-K/header_predictions"
@@ -11,6 +12,14 @@ MIN_SPAN = 1000
 VALID_ITEMS = ["1","1A","1B","2","3","4","5","6","7","7A",
                "8","9","9A","9B","10","11","12","13","14","15","16"]
 
+# Patterns that indicate the start of signature or appendix sections
+END_STOP_PATTERNS = [
+    r"^SIGNATURES",
+    r"^INDEX TO FINANCIAL STATEMENTS",
+    r"^EXHIBIT",
+    r"^FORM 10-K SUMMARY"
+]
+
 def get_doc_length(parsed_file):
     """Return total document length using last end_offset."""
     last_line = None
@@ -18,6 +27,28 @@ def get_doc_length(parsed_file):
         for line in f:
             last_line = json.loads(line)
     return last_line["end_offset"] if last_line else 0
+
+
+def find_end_stop(parsed_file, start_offset, min_gap=500):
+    """Find first end marker for the final section (e.g., SIGNATURES, INDEX, EXHIBIT).
+       Also stop early if the section itself ends with 'None.'"""
+    with open(parsed_file, "r", encoding="utf-8") as f:
+        for line in f:
+            entry = json.loads(line)
+            text = entry["text"].strip().upper()
+            offset = entry["start_offset"]
+
+            # --- Early stop if we find "None." soon after start (typical for Item 16) ---
+            if offset > start_offset and offset < start_offset + 300:
+                if re.match(r"^NONE\.?$", text):
+                    return offset + len(text)
+
+            # --- Normal signature/appendix stop detection ---
+            if offset > start_offset + min_gap:
+                for pattern in END_STOP_PATTERNS:
+                    if re.search(pattern, text, re.IGNORECASE):
+                        return offset
+    return None
 
 
 def compute_spans(headers, doc_len):
@@ -53,7 +84,6 @@ def make_boundaries(header_file, parsed_file):
     doc_len = get_doc_length(parsed_file)
     headers = compute_spans(headers, doc_len)
 
-    # Group by item_num
     grouped = {}
     for h in headers:
         grouped.setdefault(h["item_num"], []).append(h)
@@ -64,15 +94,21 @@ def make_boundaries(header_file, parsed_file):
             chosen = choose_best(grouped[item])
             chosen_headers.append(chosen)
 
-    # Force 1→16 order
     results = []
     for i, item in enumerate(VALID_ITEMS):
         cur = next((h for h in chosen_headers if h["item_num"] == item), None)
         if not cur:
             continue
+
         # Find next existing chosen item
         later = next((h for h in chosen_headers[i+1:] if h["start_offset"] > cur["start_offset"]), None)
-        end = later["start_offset"] if later else doc_len
+
+        # --- New: Smart end detection for last section ---
+        if not later:
+            end = find_end_stop(parsed_file, cur["start_offset"]) or doc_len
+        else:
+            end = later["start_offset"]
+
         results.append({
             "canonical_key": cur["canonical_key"],
             "raw_header_text": cur["raw_header_text"],
@@ -98,7 +134,7 @@ def process_all():
         boundaries = make_boundaries(header_path, parsed_path)
         out_path = os.path.join(OUTPUT_DIR, f"{doc_id}_boundaries.json")
         json.dump(boundaries, open(out_path, "w", encoding="utf-8"), indent=2, ensure_ascii=False)
-    print(f"✅ Boundary detection (v9 - sequential 1→16, fallback min_span) complete. Results saved to {OUTPUT_DIR}")
+    print(f"✅ Boundary detection (v10 - signature cutoff) complete. Results saved to {OUTPUT_DIR}")
 
 
 if __name__ == "__main__":
